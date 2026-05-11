@@ -1,7 +1,7 @@
-# TODO: Write Dockerfile for the consumer
-#
-# Requirements:
-# - Base image: python:3.14-slim
-# - Install pika from requirements.txt
-# - Non-root USER
-# - Start: python main.py
+FROM python:3.14-slim
+WORKDIR /app
+RUN pip install --no-cache-dir pika
+RUN useradd -m appuser
+USER appuser
+COPY main.py .
+CMD ["python", "main.py"]

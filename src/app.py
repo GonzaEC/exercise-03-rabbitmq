@@ -1,10 +1,29 @@
+import json
+import os
 from datetime import datetime, timezone
+
+import pika
 from fastapi import Depends, FastAPI, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from src.database import Base, engine, get_db
 from src.models import Node
 from src.schemas import NodeCreate, NodeResponse, NodeUpdate
+
+
+def publish_event(event_type: str, node_name: str):
+    url = os.environ.get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+    params = pika.URLParameters(url)
+    conn = pika.BlockingConnection(params)
+    ch = conn.channel()
+    ch.queue_declare(queue="node_events", durable=True)
+    body = json.dumps({
+        "event": event_type,
+        "node_name": node_name,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    ch.basic_publish(exchange="", routing_key="node_events", body=body)
+    conn.close()
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI()
@@ -28,6 +47,7 @@ def register_node(node: NodeCreate, db: Session = Depends(get_db)):
     db.add(db_node)
     db.commit()
     db.refresh(db_node)
+    publish_event("node_registered", db_node.name)
     return db_node
 
 @app.get("/api/nodes", response_model=list[NodeResponse])
@@ -63,11 +83,5 @@ def delete_node(name: str, db: Session = Depends(get_db)):
     node.status = "inactive"
     node.updated_at = datetime.now(timezone.utc)
     db.commit()
+    publish_event("node_deleted", name)
     return Response(status_code=204)
-
-# TODO: After each POST /api/nodes (register) and DELETE /api/nodes/{name},
-# publish an event to RabbitMQ with this format:
-# {"event": "node_registered" or "node_deleted", "node_name": "<name>", "timestamp": "<ISO8601>"}
-#
-# Use pika to connect to RabbitMQ at RABBITMQ_URL env var.
-# Queue name: "node_events"
